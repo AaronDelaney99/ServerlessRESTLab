@@ -172,4 +172,3 @@ export class RestAPIStack extends cdk.Stack {
         );
       }
     }
-    
