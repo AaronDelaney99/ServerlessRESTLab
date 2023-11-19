@@ -78,9 +78,19 @@ export class RestAPIStack extends cdk.Stack {
             REGION: "eu-west-1",
           },
         });
-        
-        moviesTable.grantReadWriteData(newMovieFn);
 
+        const deleteMovieFn = new lambdanode.NodejsFunction(this, "DeleteMovieFn", {
+          architecture: lambda.Architecture.ARM_64,
+          runtime: lambda.Runtime.NODEJS_16_X,
+          entry: `${__dirname}/../lambdas/deleteMovie.ts`,
+          timeout: cdk.Duration.seconds(10),
+          memorySize: 128,
+          environment: {
+            TABLE_NAME: moviesTable.tableName,
+            REGION: "eu-west-1",
+          },
+        });
+        
         const getMovieCastMembersFn = new lambdanode.NodejsFunction(
           this,
           "GetCastMemberFn",
@@ -96,29 +106,30 @@ export class RestAPIStack extends cdk.Stack {
             },
           }
         );
-
-        movieCastsTable.grantReadData(getMovieCastMembersFn);
-        
-        new custom.AwsCustomResource(this, "moviesddbInitData", {
-          onCreate: {
-            service: "DynamoDB",
-            action: "batchWriteItem",
-            parameters: {
-              RequestItems: {
-                [moviesTable.tableName]: generateBatch(movies),
-                [movieCastsTable.tableName]: generateBatch(movieCasts),  // Added
+          
+          new custom.AwsCustomResource(this, "moviesddbInitData", {
+            onCreate: {
+              service: "DynamoDB",
+              action: "batchWriteItem",
+              parameters: {
+                RequestItems: {
+                  [moviesTable.tableName]: generateBatch(movies),
+                  [movieCastsTable.tableName]: generateBatch(movieCasts),  // Added
+                },
               },
+              physicalResourceId: custom.PhysicalResourceId.of("moviesddbInitData"), //.of(Date.now().toString()),
             },
-            physicalResourceId: custom.PhysicalResourceId.of("moviesddbInitData"), //.of(Date.now().toString()),
-          },
-          policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
-            resources: [moviesTable.tableArn, movieCastsTable.tableArn],  // Includes movie cast
-          }),
-        });
-        
+            policy: custom.AwsCustomResourcePolicy.fromSdkCalls({
+              resources: [moviesTable.tableArn, movieCastsTable.tableArn],  // Includes movie cast
+            }),
+          });
+          
         // Permissions 
+        moviesTable.grantReadWriteData(newMovieFn);
+        moviesTable.grantReadWriteData(deleteMovieFn);
         moviesTable.grantReadData(getMovieByIdFn)
         moviesTable.grantReadData(getAllMoviesFn)
+        movieCastsTable.grantReadData(getMovieCastMembersFn);
         
         const api = new apig.RestApi(this, "RestAPI", {
           description: "demo api",
@@ -143,11 +154,15 @@ export class RestAPIStack extends cdk.Stack {
           "POST",
           new apig.LambdaIntegration(newMovieFn, { proxy: true })
         );
-    
+
         const movieEndpoint = moviesEndpoint.addResource("{movieId}");
         movieEndpoint.addMethod(
           "GET",
           new apig.LambdaIntegration(getMovieByIdFn, { proxy: true })
+        );
+        movieEndpoint.addMethod(
+          "DELETE",
+          new apig.LambdaIntegration(deleteMovieFn, { proxy: true })
         );
 
         const movieCastEndpoint = moviesEndpoint.addResource("cast");
